@@ -12,7 +12,7 @@ from sklearn.cluster import KMeans
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
 plt.rcParams['axes.unicode_minus'] = False  # 解决负号'-'显示为方块的问题
 
-output_folder_viz = "可视化图表文件夹"
+output_folder_viz = "可视化展示计划文件夹"
 if not os.path.exists(output_folder_viz):
     os.makedirs(output_folder_viz)
     print(f"已创建文件夹: {output_folder_viz}")

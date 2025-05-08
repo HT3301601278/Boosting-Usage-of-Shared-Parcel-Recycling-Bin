@@ -14,7 +14,7 @@ from yellowbrick.cluster import KElbowVisualizer
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
 plt.rcParams['axes.unicode_minus'] = False
 
-output_folder_multi = "多变量分析图表文件夹"
+output_folder_multi = "多变量分析文件夹"
 if not os.path.exists(output_folder_multi):
     os.makedirs(output_folder_multi)
     print(f"已创建文件夹: {output_folder_multi}")
