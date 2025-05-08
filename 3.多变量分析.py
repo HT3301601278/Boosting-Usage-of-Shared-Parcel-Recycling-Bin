@@ -9,6 +9,10 @@ from sklearn.compose import ColumnTransformer
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 
+# 设置matplotlib中文字体支持
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
+plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
 # --- 0. 数据加载与通用预处理函数 ---
 try:
     df_original = pd.read_csv('数据详情值.csv')
@@ -173,14 +177,14 @@ for k_val in k_range:
 fig_kmeans_k_selection, axs = plt.subplots(1, 2, figsize=(12, 5)) # <<< 修改：获取figure和axes对象
 
 axs[0].plot(k_range, inertia, marker='o')
-axs[0].set_title('Elbow Method for Optimal K')
-axs[0].set_xlabel('Number of clusters (K)')
-axs[0].set_ylabel('Inertia')
+axs[0].set_title('K值选择肘部法则图')
+axs[0].set_xlabel('聚类数量 (K)')
+axs[0].set_ylabel('惯性值')
 
 axs[1].plot(k_range, silhouette_scores, marker='o')
-axs[1].set_title('Silhouette Score for Optimal K')
-axs[1].set_xlabel('Number of clusters (K)')
-axs[1].set_ylabel('Silhouette Score')
+axs[1].set_title('K值选择轮廓系数图')
+axs[1].set_xlabel('聚类数量 (K)')
+axs[1].set_ylabel('轮廓系数')
 
 plt.tight_layout()
 chart_path_kmeans_k = os.path.join(output_folder, "kmeans_k_selection.png") # <<< 新增：定义图表保存路径
