@@ -102,10 +102,6 @@ if education_col in df.columns:
 if gender_col in df.columns:
     df['性别_数值'] = df[gender_col].map({'男': 0, '女': 1})
 
-# 5. 职业 (创建虚拟变量/哑变量)
-if occupation_col in df.columns:
-    df = pd.get_dummies(df, columns=[occupation_col], prefix='职业', dummy_na=False)
-
 # --- Likert量表数据处理 ---
 likert_mapping = {"非常不同意": 1, "不同意": 2, "一般": 3, "同意": 4, "非常同意": 5}
 likert_cols_from_csv = [col for col in df.columns if any(col.startswith(prefix) for prefix in likert_q_prefixes)]
