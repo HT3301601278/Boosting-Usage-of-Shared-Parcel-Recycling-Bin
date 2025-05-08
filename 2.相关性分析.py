@@ -1,398 +1,347 @@
-import os
-
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
-import seaborn as sns  # 用于热力图
-from scipy.stats import spearmanr, pearsonr, ttest_ind, f_oneway, kruskal  # 导入统计检验函数
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import chi2_contingency, spearmanr, mannwhitneyu, kruskal, ttest_ind
+import warnings
 
-# --- 全局设置与文件夹创建 ---
-# 设置matplotlib支持中文显示
+# Matplotlib中文显示设置
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
-plt.rcParams['axes.unicode_minus'] = False  # 解决负号'-'显示为方块的问题
+plt.rcParams['axes.unicode_minus'] = False  # 解决保存图像是负号'-'显示为方块的问题
 
-# 定义图片输出文件夹
-output_folder_corr = "相关性分析图表文件夹"
-if not os.path.exists(output_folder_corr):
-    os.makedirs(output_folder_corr)
-    print(f"已创建文件夹: {output_folder_corr}")
+warnings.filterwarnings('ignore', category=UserWarning, module='scipy')
+warnings.filterwarnings('ignore', category=RuntimeWarning) # Ignore runtime warnings for mean of empty slice etc.
 
-# --- 数据加载与预处理 ---
-print("--- 正在加载和预处理数据... ---")
+# --- 1. 数据加载和预处理 ---
 try:
-    df = pd.read_csv("数据详情值.csv")
+    df = pd.read_csv('数据详情值.csv')
 except FileNotFoundError:
-    print("错误：未找到 '数据详情值.csv' 文件。请确保文件与脚本在同一目录下，或提供正确路径。")
+    print("错误：未找到 '数据详情值.csv' 文件。请确保文件在脚本同目录下。")
     exit()
 
-# 删除完全为空的行
-df.dropna(how='all', inplace=True)
-df.reset_index(drop=True, inplace=True)
-
-
-# 数据清洗函数：去除选项前缀 (如 "A.", "B.")
-def clean_prefix(x):
-    if isinstance(x, str) and len(x) > 2 and x[1] == '.' and x[0].isalpha():
-        return x[2:]
-    return x
-
-
-# --- 列名定义 (根据您提供的CSV文件) ---
-# 核心行为变量
-usage_frequency_col_actual = '3.**过去30天**您使用回收箱的次数'  # 使用频率
-
-# 人口统计学列
-gender_col = '7.您的性别'
-age_col = '8.您的年龄'
-education_col = '9.您的最高学历'
-occupation_col = '10.您的职业'
-
-# 心理因素和激励方案等Likert量表题目前缀
-likert_q_prefixes = [f"{i}." for i in range(11, 21)]  # 问题11到20
-
-# 障碍因素列 (多选)
-obstacle_cols_raw = [
-    '5.您在使用回收箱时遇到的**主要障碍**（可多选）:位置不便',
-    '5.您在使用回收箱时遇到的**主要障碍**（可多选）:排队/拥堵',
-    '5.您在使用回收箱时遇到的**主要障碍**（可多选）:不清楚可回收物',
-    '5.您在使用回收箱时遇到的**主要障碍**（可多选）:无奖励',
-    '5.您在使用回收箱时遇到的**主要障碍**（可多选）:卫生差',
-    '5.您在使用回收箱时遇到的**主要障碍**（可多选）:担心信息泄露',
-    '5.您在使用回收箱时遇到的**主要障碍**（可多选）:其他'
-]
-
-# --- 应用前缀清洗到分类列 ---
-categorical_cols_to_clean_for_mapping = [
-    usage_frequency_col_actual, gender_col, age_col, education_col, occupation_col
-]
-# 也包括问卷第一题和第六题，虽然它们不直接用于这里的相关性分析，但保持清洗一致性
-other_categorical_cols = [
-    '1.您所在社区目前**是否已设置**“快递包装共享回收箱”？',
-    '2.您**每月收到的快递数量**',
-    '6.若将回收服务成本计入物业费，您是否接受每月物业费**相比当前增加不超过2元**？'
-]
-all_cols_to_clean_prefix = categorical_cols_to_clean_for_mapping + other_categorical_cols
-
-for col in all_cols_to_clean_prefix:
-    if col in df.columns:
-        df[col] = df[col].apply(clean_prefix)
-    else:
-        print(f"数据清洗提示: 预定义分类列 '{col}' 在CSV中未找到。")
-
-# --- 为相关性分析准备数值编码 ---
-# 1. 使用频率编码
-usage_freq_mapping = {"0次": 0, "1-2次": 1, "3-5次": 2, "6-10次": 3, "10次以上": 4}
-if usage_frequency_col_actual in df.columns:
-    df['使用频率_数值'] = df[usage_frequency_col_actual].map(usage_freq_mapping)
-else:
-    print(f"关键列警告: 使用频率列 '{usage_frequency_col_actual}' 未在CSV中找到。部分分析将无法执行。")
-    df['使用频率_数值'] = np.nan
-
-# 2. 年龄编码
-age_mapping = {"15-20": 0, "21-25": 1, "26-30": 2, "31-35": 3, "36-45": 4, "46及以上": 5}
-if age_col in df.columns:
-    df['年龄_数值'] = df[age_col].map(age_mapping)
-
-# 3. 学历编码
-education_mapping = {"初中及以下": 0, "高中/中专": 1, "大专": 2, "本科": 3, "硕士": 4, "博士": 5}
-if education_col in df.columns:
-    df['学历_数值'] = df[education_col].map(education_mapping)
-
-# 4. 性别编码
-if gender_col in df.columns:
-    df['性别_数值'] = df[gender_col].map({'男': 0, '女': 1})
-
-# --- Likert量表数据处理 ---
-likert_mapping = {"非常不同意": 1, "不同意": 2, "一般": 3, "同意": 4, "非常同意": 5}
-likert_cols_from_csv = [col for col in df.columns if any(col.startswith(prefix) for prefix in likert_q_prefixes)]
-
-for col in likert_cols_from_csv:
-    if col in df.columns:
-        # 应用前缀清洗 (例如，如果数据是 "A.非常不同意")
-        df[col] = df[col].apply(lambda x: clean_prefix(x) if isinstance(x, str) else x)
-        # 应用映射
-        df[col] = df[col].map(likert_mapping)
-        # 转换为数值型，无法转换的变为NaN
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-# --- 计算心理因素各维度平均分 ---
-psychological_dimensions_def = {
-    '感知有用性': [col for col in likert_cols_from_csv if col.startswith('11.感知有用性:')],
-    '感知便利性': [col for col in likert_cols_from_csv if col.startswith('12.感知便利性:')],
-    '感知风险性': [col for col in likert_cols_from_csv if col.startswith('13.感知风险性:')],
-    '感知趣味性': [col for col in likert_cols_from_csv if col.startswith('14.感知趣味性:')],
-    '信任程度': [col for col in likert_cols_from_csv if col.startswith('15.信任程度:')],
-    '主观规范': [col for col in likert_cols_from_csv if col.startswith('16.主观规范:')],
-    '环境责任': [col for col in likert_cols_from_csv if col.startswith('17.环境责任:')],
-    '使用习惯': [col for col in likert_cols_from_csv if col.startswith('18.使用习惯:')],
-    '未来使用意向': [col for col in likert_cols_from_csv if col.startswith('20.未来使用意向:')]
+# Likert量表映射 (统一处理A/B/C/D/E 和 A./B./C./D./E.的情况)
+likert_mapping = {
+    'A. 非常不同意': 1, '非常不同意': 1,
+    'B. 不同意': 2, '不同意': 2,
+    'C. 一般': 3, '一般': 3,
+    'D. 同意': 4, '同意': 4,
+    'E. 非常同意': 5, '非常同意': 5
 }
-dimension_mean_score_cols_generated = []  # 存储生成的维度平均分列名
-for dim_name, item_cols in psychological_dimensions_def.items():
-    actual_item_cols = [col for col in item_cols if col in df.columns]  # 只使用DataFrame中实际存在的列
-    dim_mean_col_name = f"{dim_name}_平均分"
-    dimension_mean_score_cols_generated.append(dim_mean_col_name)
-    if actual_item_cols:  # 如果该维度下有实际的列
-        df[dim_mean_col_name] = df[actual_item_cols].mean(axis=1)
+
+# 清理列名中的特殊字符，方便访问
+df.columns = df.columns.str.replace('\*', '', regex=True) # 移除星号
+df.columns = df.columns.str.replace('\n', '', regex=False) # 移除换行符
+df.columns = df.columns.str.strip() # 移除前后空格
+
+# 定义需要转换的Likert量表列
+likert_cols_prefixes = [
+    "11.感知有用性:", "12.感知便利性:", "13.感知风险性:", "14.感知趣味性:",
+    "15.信任程度:", "16.主观规范:", "17.环境责任:", "18.使用习惯:",
+    "19.激励方案兴趣度:", "20.未来使用意向:"
+]
+
+# 实际列名可能与前缀有细微差别，我们基于前缀找到所有相关列
+all_likert_cols = []
+for col in df.columns:
+    for prefix in likert_cols_prefixes:
+        if col.startswith(prefix):
+            all_likert_cols.append(col)
+            break # 避免一个列被多次添加（如果前缀有重叠）
+
+for col in all_likert_cols:
+    # 移除选项前的字母和点 (例如 "A. 非常不同意" -> "非常不同意")
+    # 使用更灵活的替换，允许选项前缀如 "A." 或 "A. "
+    df[col] = df[col].astype(str).str.replace(r'^[A-E]\.\s*', '', regex=True).map(likert_mapping)
+
+
+# 人口统计学特征的映射
+# 性别
+df['7.您的性别'] = df['7.您的性别'].map({'A.男': 1, 'B.女': 2})
+# 年龄 (转换为有序类别，方便后续分析)
+age_mapping = {'A.15-20': 1, 'B.21-25': 2, 'C.26-30': 3, 'D.31-35': 4, 'E.36-45': 5, 'F.46及以上': 6}
+df['8.您的年龄_numeric'] = df['8.您的年龄'].map(age_mapping)
+# 学历
+edu_mapping = {'A.初中及以下': 1, 'B.高中/中专': 2, 'C.大专': 3, 'D.本科': 4, 'E.硕士': 5, 'F.博士': 6}
+df['9.您的最高学历_numeric'] = df['9.您的最高学历'].map(edu_mapping)
+# 职业
+occupation_mapping = {
+    'A.学生': 1, 'B.全职上班族': 2, 'C.自由职业': 3, 'D.退休': 4,
+    'E.事业单位/公务员': 5,  # 假设问卷有这个选项，如果没有，实际数据中不会用到
+    'F.其他': 6 # 假设问卷有这个选项
+}
+df['10.您的职业_numeric'] = df['10.您的职业'].map(occupation_mapping)
+
+
+# 使用频率转换为数值 (Q3: 过去30天您使用回收箱的次数)
+# 取区间中值或代表值
+usage_freq_mapping = {
+    'A.0次': 0,
+    'B.1-2次': 1.5,
+    'C.3-5次': 4,
+    'D.6-10次': 8,
+    'E.10次以上': 12 # 假设10次以上用12代表
+}
+df['使用频率_numeric'] = df['3.过去30天您使用回收箱的次数'].map(usage_freq_mapping)
+
+# 处理多选题 (Q5: 主要障碍) - 将选中标记为1，未选中（NaN）标记为0
+obstacle_cols = [col for col in df.columns if col.startswith("5.您在使用回收箱时遇到的主要障碍:")]
+for col in obstacle_cols:
+    df[col] = df[col].notna().astype(int)
+
+
+# --- 计算心理因素的平均分 ---
+psych_factors_def = {
+    '感知有用性': [col for col in df.columns if col.startswith("11.感知有用性:")],
+    '感知便利性': [col for col in df.columns if col.startswith("12.感知便利性:")],
+    '感知风险性': [col for col in df.columns if col.startswith("13.感知风险性:")],
+    '感知趣味性': [col for col in df.columns if col.startswith("14.感知趣味性:")],
+    '信任程度': [col for col in df.columns if col.startswith("15.信任程度:")],
+    '主观规范': [col for col in df.columns if col.startswith("16.主观规范:")],
+    '环境责任': [col for col in df.columns if col.startswith("17.环境责任:")],
+    '使用习惯': [col for col in df.columns if col.startswith("18.使用习惯:")],
+}
+
+psych_avg_cols = []
+for factor_name, cols in psych_factors_def.items():
+    avg_col_name = f'{factor_name}_avg'
+    if cols: # 确保列存在
+        df[avg_col_name] = df[cols].mean(axis=1, skipna=True)
+        psych_avg_cols.append(avg_col_name)
     else:
-        df[dim_mean_col_name] = np.nan  # 如果没有列，则填充NaN
-        print(f"心理维度提示: 维度 '{dim_name}' 没有在CSV中找到对应的题目列。")
+        print(f"警告：心理因素 '{factor_name}' 对应的列未在数据中找到。")
 
-print("--- 数据加载与预处理完成 ---")
-print(f"总样本数: {len(df)}")
-if len(df) < 100:
-    print(f"注意: 当前样本量为 {len(df)}，小于项目建议的100份有效样本。统计结果的普适性可能受限。")
-print("\n" + "=" * 60 + "\n")
 
-# ==============================================================================
-# --- 二、相关性分析 ---
-# ==============================================================================
-print("--- 开始执行相关性分析 ---")
+print("--- 数据预处理完成 ---\n")
 
 # --- 2.1 使用行为影响因素分析 ---
-print("\n--- 2.1 使用行为影响因素分析 ---")
+print("--- 2.1 使用行为影响因素分析 ---")
 
-# 2.1.1 分析人口统计特征与使用频率的关系
-print("\n--- 2.1.1 人口统计特征与使用频率的关系 ---")
-target_usage_freq_numeric = '使用频率_数值'
-
-if target_usage_freq_numeric not in df.columns or df[target_usage_freq_numeric].isnull().all():
-    print(f"警告: '{target_usage_freq_numeric}' 列不存在或全为空，无法执行人口统计特征与使用频率的相关性分析。")
-else:
-    demographics_for_corr_map = {
-        '性别_数值': '性别',
-        '年龄_数值': '年龄',
-        '学历_数值': '学历',
-    }
-    print("\n人口统计特征 (有序/二分) 与使用频率的Spearman相关性:")
-    for num_col, name in demographics_for_corr_map.items():
-        if num_col in df.columns and not df[num_col].isnull().all():
-            temp_df = df[[num_col, target_usage_freq_numeric]].dropna()
-            if not temp_df.empty and len(temp_df) >= 2:  # Spearman需要至少2个数据点
-                corr, p_value = spearmanr(temp_df[num_col], temp_df[target_usage_freq_numeric])
-                print(f"  {name} vs 使用频率: 相关系数={corr:.3f}, P值={p_value:.3f}{' *' if p_value < 0.05 else ''}")
-            else:
-                print(f"  {name} vs 使用频率: 数据不足无法计算相关性。")
-        else:
-            print(f"  人口统计特征列 '{num_col}' ({name}) 未找到或数据全为空。")
-
-    # 职业（分类）与使用频率（有序）的关系 - Kruskal-Wallis H 检验
-    if occupation_col in df.columns and not df[occupation_col].isnull().all():  # 使用原始职业列进行分组
-        print("\n职业与使用频率的组间差异 (Kruskal-Wallis H 检验):")
-        groups_for_kruskal = []
-        # df[occupation_col] 此时已经是清洗过前缀的职业名称
-        for job_name in df[occupation_col].dropna().unique():
-            group_data = df[df[occupation_col] == job_name][target_usage_freq_numeric].dropna()
-            if len(group_data) >= 1:  # Kruskal-Wallis对每组样本量要求不高，但至少要有数据
-                groups_for_kruskal.append(group_data)
-
-        if len(groups_for_kruskal) >= 2:  # 需要至少两个组进行比较
-            try:
-                stat, p_value = kruskal(*groups_for_kruskal)
-                print(f"  Kruskal-Wallis H 检验: H统计量={stat:.3f}, P值={p_value:.3f}{' *' if p_value < 0.05 else ''}")
-                if p_value < 0.05:
-                    print("    结论: 不同职业群体在使用频率上存在显著差异。")
-                else:
-                    print("    结论: 不同职业群体在使用频率上无显著差异。")
-            except ValueError as e:
-                print(f"  Kruskal-Wallis检验出错: {e} (可能是由于样本量过小或数据分布问题)")
-        else:
-            print("  职业分组不足或数据不足，无法进行Kruskal-Wallis检验。")
-
-# 2.1.2 计算心理因素与使用频率的相关系数
-print("\n--- 2.1.2 心理因素与使用频率的相关系数 ---")
-if target_usage_freq_numeric not in df.columns or df[target_usage_freq_numeric].isnull().all():
-    print(f"警告: '{target_usage_freq_numeric}' 列不存在或全为空，无法执行心理因素与使用频率的相关性分析。")
-else:
-    print("\n心理因素各维度平均分与使用频率的Spearman相关性:")
-    for dim_mean_col in dimension_mean_score_cols_generated:
-        if dim_mean_col in df.columns and not df[dim_mean_col].isnull().all():
-            temp_df = df[[dim_mean_col, target_usage_freq_numeric]].dropna()
-            if not temp_df.empty and len(temp_df) >= 2:
-                corr, p_value = spearmanr(temp_df[dim_mean_col], temp_df[target_usage_freq_numeric])
-                dim_name_simple = dim_mean_col.replace('_平均分', '')
-                print(
-                    f"  {dim_name_simple} vs 使用频率: 相关系数={corr:.3f}, P值={p_value:.3f}{' *' if p_value < 0.05 else ''}")
-            else:
-                print(f"  {dim_mean_col.replace('_平均分', '')} vs 使用频率: 数据不足无法计算相关性。")
-        else:
-            print(f"  心理维度平均分列 '{dim_mean_col}' 未找到或数据全为空。")
-
-# --- 2.2 障碍与态度关系分析 ---
-print("\n\n--- 2.2 障碍与态度关系分析 ---")
-# 2.2.1 分析主要障碍因素与使用意愿的关联
-print("\n--- 2.2.1 主要障碍因素与未来使用意愿的关联 ---")
-future_intention_mean_col = '未来使用意向_平均分'
-
-if future_intention_mean_col not in df.columns or df[future_intention_mean_col].isnull().all():
-    print(f"警告: '{future_intention_mean_col}' 列不存在或全为空，无法执行障碍与使用意愿的关联分析。")
-else:
-    print("\n主要障碍因素与未来使用意愿的点双列相关性 (Pearson r):")
-    for obs_col_name_raw in obstacle_cols_raw:  # 使用原始障碍列名
-        if obs_col_name_raw in df.columns:
-            obstacle_name_simple = obs_col_name_raw.split(':')[-1]
-            # 创建二元障碍列 (1=提及该障碍, 0=未提及)
-            # 如果原始列中不是NaN，则表示提及 (因为CSV中未选中的是空白)
-            df[f"{obstacle_name_simple}_提及"] = df[obs_col_name_raw].notna().astype(int)
-
-            obstacle_binary_col = f"{obstacle_name_simple}_提及"
-            temp_df = df[[obstacle_binary_col, future_intention_mean_col]].dropna()
-
-            if not temp_df.empty and len(temp_df) >= 2 and temp_df[obstacle_binary_col].nunique() > 1:
-                corr, p_value = pearsonr(temp_df[obstacle_binary_col], temp_df[future_intention_mean_col])
-                print(
-                    f"  障碍 '{obstacle_name_simple}' vs 未来使用意愿: 相关系数={corr:.3f}, P值={p_value:.3f}{' *' if p_value < 0.05 else ''}")
-            else:
-                print(f"  障碍 '{obstacle_name_simple}' vs 未来使用意愿: 数据不足或障碍提及情况单一，无法计算相关性。")
-        else:
-            print(f"  原始障碍列 '{obs_col_name_raw}' 在CSV中未找到。")
-
-# 2.2.2 使用Python创建心理因素之间的相关矩阵
-print("\n--- 2.2.2 心理因素之间的相关矩阵 ---")
-# 选择所有维度平均分列进行相关性分析
-psych_dims_for_matrix = [col for col in dimension_mean_score_cols_generated if
-                         col in df.columns and not df[col].isnull().all()]
-
-if psych_dims_for_matrix and len(psych_dims_for_matrix) > 1:
-    psych_dims_df_for_matrix = df[psych_dims_for_matrix].dropna()  # dropna以避免NaN影响相关性计算
-    if not psych_dims_df_for_matrix.empty and len(psych_dims_df_for_matrix) >= 2:
-        correlation_matrix_psych = psych_dims_df_for_matrix.corr(method='spearman')
-        print("\n心理因素各维度平均分之间的Spearman相关矩阵:")
-        print(correlation_matrix_psych.round(3))
-
-        plt.figure(figsize=(14, 12))  # 调整图像大小以容纳更多标签
-        sns.heatmap(correlation_matrix_psych, annot=True, cmap='coolwarm', fmt=".2f", linewidths=.5,
-                    annot_kws={"size": 8}, cbar_kws={'label': 'Spearman Correlation'})  # 调整注释字体大小
-        plt.title('心理因素各维度平均分之间的Spearman相关矩阵', fontsize=16)
-        # 调整标签，去除"_平均分"
-        cleaned_labels = [label.replace('_平均分', '') for label in correlation_matrix_psych.columns]
-        plt.xticks(ticks=np.arange(len(cleaned_labels)) + 0.5, labels=cleaned_labels, rotation=45, ha='right',
-                   fontsize=10)
-        plt.yticks(ticks=np.arange(len(cleaned_labels)) + 0.5, labels=cleaned_labels, rotation=0, fontsize=10)
-        plt.tight_layout()
-
-        filename_heatmap = "心理因素相关矩阵_热力图.png"
-        filepath_heatmap = os.path.join(output_folder_corr, filename_heatmap)
-        try:
-            plt.savefig(filepath_heatmap)
-            print(f"\n热力图已保存到: {filepath_heatmap}")
-        except Exception as e:
-            print(f"\n保存热力图失败: {e}")
-        plt.show()
-        plt.close()
-    else:
-        print("心理因素各维度平均分数据不足 (dropna后为空或少于2行)，无法生成相关矩阵。")
-else:
-    print("有效的心理因素各维度平均分列不足两个，无法生成相关矩阵。")
-
-# --- 2.3 激励偏好分析 ---
-print("\n\n--- 2.3 激励偏好分析 ---")
-# 激励方案的列 (原始Likert评分，值为1-5)
-incentive_item_cols_all = [col for col in likert_cols_from_csv if col.startswith('19.激励方案兴趣度:')]
-
-# 2.3.1 比较不同用户群体对各类激励的偏好差异
-print("\n--- 2.3.1 不同用户群体对各类激励的偏好差异 (t-检验/ANOVA) ---")
-
-demographic_cols_for_grouping = {
-    '性别': gender_col,  # 原始分类列名 (已清洗前缀)
-    '年龄段': age_col,  # 原始分类列名
-    '学历层次': education_col,  # 原始分类列名
-    '职业类型': occupation_col  # 原始分类列名
+# 人口统计特征与使用频率的关系
+demographics_to_analyze = {
+    '性别': '7.您的性别',
+    '年龄段': '8.您的年龄', # 使用原始分类标签进行分组展示
+    '学历': '9.您的最高学历',
+    '职业': '10.您的职业'
 }
 
-for incentive_col_name in incentive_item_cols_all:
-    incentive_name_simple = incentive_col_name.split(':')[-1]
-    if incentive_col_name not in df.columns or df[incentive_col_name].isnull().all():
-        print(f"\n激励方案 '{incentive_name_simple}' 数据不足，跳过分析。")
-        continue
+print("\n人口统计特征与平均使用频率：")
+for name, col in demographics_to_analyze.items():
+    if col in df.columns and '使用频率_numeric' in df.columns:
+        # 过滤掉使用频率为NaN的行，避免影响均值计算
+        temp_df = df.dropna(subset=['使用频率_numeric', col])
+        if not temp_df.empty:
+            mean_usage_by_group = temp_df.groupby(col)['使用频率_numeric'].mean()
+            print(f"\n按{name}分组的平均使用频率:")
+            print(mean_usage_by_group)
 
-    print(f"\n--- 对激励方案 '{incentive_name_simple}' 的偏好差异分析 ---")
-    for group_category_name, demo_col_name_raw in demographic_cols_for_grouping.items():
-        if demo_col_name_raw not in df.columns or df[demo_col_name_raw].isnull().all():
-            print(f"  人口统计特征 '{group_category_name}' ({demo_col_name_raw}) 数据不足或列不存在，跳过。")
-            continue
+            # 可视化 (条形图)
+            plt.figure(figsize=(8, 5))
+            mean_usage_by_group.plot(kind='bar')
+            plt.title(f'按{name}分组的平均使用频率')
+            plt.ylabel('平均使用频率 (次数/30天)')
+            plt.xlabel(name)
+            plt.xticks(rotation=45, ha='right')
+            plt.tight_layout()
+            plt.show()
 
-        print(f"  按 '{group_category_name}' 分析:")
-        # df[demo_col_name_raw] 应该是已经清洗过前缀的分类值
-        unique_groups_in_demo = df[demo_col_name_raw].dropna().unique()
-
-        if len(unique_groups_in_demo) == 2:  # T-test
-            group1_values = df[df[demo_col_name_raw] == unique_groups_in_demo[0]][incentive_col_name].dropna()
-            group2_values = df[df[demo_col_name_raw] == unique_groups_in_demo[1]][incentive_col_name].dropna()
-            if len(group1_values) >= 2 and len(group2_values) >= 2:  # t-test需要每组至少2个数据点
-                stat, p_value = ttest_ind(group1_values, group2_values, equal_var=False)  # Welch's t-test
-                print(
-                    f"    {unique_groups_in_demo[0]} (均值={group1_values.mean():.2f},N={len(group1_values)}) vs {unique_groups_in_demo[1]} (均值={group2_values.mean():.2f},N={len(group2_values)}): T统计量={stat:.2f}, P值={p_value:.3f}{' *' if p_value < 0.05 else ''}")
-            else:
-                print(
-                    f"    组别 '{unique_groups_in_demo[0]}' 或 '{unique_groups_in_demo[1]}' 数据不足 (少于2个有效值) 进行t-检验。")
-        elif len(unique_groups_in_demo) > 2:  # ANOVA
-            anova_groups_data = []
-            valid_groups_for_anova = 0
-            group_means_summary = []
-            for group_value in unique_groups_in_demo:
-                current_group_incentive_data = df[df[demo_col_name_raw] == group_value][incentive_col_name].dropna()
-                if len(current_group_incentive_data) >= 2:  # ANOVA通常也建议每组至少2个
-                    anova_groups_data.append(current_group_incentive_data)
-                    group_means_summary.append(
-                        f"{group_value}(均值={current_group_incentive_data.mean():.2f},N={len(current_group_incentive_data)})")
-                    valid_groups_for_anova += 1
-
-            if valid_groups_for_anova >= 2:  # 需要至少两个有效组进行比较
-                try:
-                    stat, p_value = f_oneway(*anova_groups_data)
-                    print(
-                        f"    ANOVA检验 (比较组: {', '.join(group_means_summary)}): F统计量={stat:.2f}, P值={p_value:.3f}{' *' if p_value < 0.05 else ''}")
-                    if p_value < 0.05:
-                        print("      结论: 不同组别在该激励方案偏好上存在显著差异。")
-                except ValueError as e:
-                    print(f"    ANOVA检验出错: {e} (可能是由于样本量过小、方差为0或数据问题)")
-            else:
-                print(f"    按 '{group_category_name}' 分组后，有效组别 (每组至少2个数据点) 不足2个，无法进行ANOVA检验。")
-        else:  # 少于2个组
-            print(f"    按 '{group_category_name}' 分组后，唯一有效组别少于2个，无法比较。")
-
-# 2.3.2 分析环境责任感高低对激励偏好的影响
-print("\n\n--- 2.3.2 环境责任感高低对激励偏好的影响 ---")
-env_resp_mean_col = '环境责任_平均分'
-
-if env_resp_mean_col not in df.columns or df[env_resp_mean_col].isnull().all():
-    print(f"警告: '{env_resp_mean_col}' 列不存在或全为空，无法执行环境责任感与激励偏好的分析。")
-else:
-    median_env_responsibility = df[env_resp_mean_col].median()
-    if pd.isna(median_env_responsibility):
-        print("环境责任感数据不足，无法计算中位数进行分组。")
+            # 统计检验 (示例：年龄段与使用频率 - Kruskal-Wallis H-test)
+            if name == '年龄段' and '8.您的年龄_numeric' in temp_df.columns: # 使用数值年龄进行分组
+                age_groups = [group_data['使用频率_numeric'].dropna().values for name, group_data in temp_df.groupby('8.您的年龄_numeric')]
+                age_groups = [g for g in age_groups if len(g) > 0] # 移除空组
+                if len(age_groups) > 1: # 至少需要两个组进行比较
+                    try:
+                        stat, p = kruskal(*age_groups)
+                        print(f"Kruskal-Wallis检验 ({name} vs 使用频率): H-statistic={stat:.3f}, p-value={p:.3f}")
+                        if p < 0.05:
+                            print("结论：不同年龄段的使用频率存在显著差异。")
+                        else:
+                            print("结论：不同年龄段的使用频率无显著差异。")
+                    except ValueError as e:
+                         print(f"Kruskal-Wallis检验 ({name} vs 使用频率) 无法执行: {e}")
+        else:
+            print(f"警告：对于特征 '{name}' 或使用频率，数据不足或存在过多缺失值。")
     else:
-        # 创建分组列，确保不修改原始df太多次，这里直接用条件选择
-        low_resp_mask = df[env_resp_mean_col] < median_env_responsibility
-        high_resp_mask = df[env_resp_mean_col] >= median_env_responsibility
+        print(f"警告：列 '{col}' 或 '使用频率_numeric' 不在DataFrame中。")
 
-        print(f"根据环境责任感中位数 ({median_env_responsibility:.2f}) 分为高低两组。")
 
-        for incentive_col_name in incentive_item_cols_all:
-            incentive_name_simple = incentive_col_name.split(':')[-1]
-            if incentive_col_name not in df.columns or df[incentive_col_name].isnull().all():
-                print(f"\n激励方案 '{incentive_name_simple}' 数据不足，跳过。")
-                continue
-
-            print(f"\n对激励方案 '{incentive_name_simple}' 的偏好差异 (按环境责任感高低):")
-
-            low_resp_incentive_data = df.loc[low_resp_mask, incentive_col_name].dropna()
-            high_resp_incentive_data = df.loc[high_resp_mask, incentive_col_name].dropna()
-
-            if len(low_resp_incentive_data) >= 2 and len(high_resp_incentive_data) >= 2:
-                stat, p_value = ttest_ind(low_resp_incentive_data, high_resp_incentive_data, equal_var=False)
-                print(
-                    f"  低责任感组 (均值={low_resp_incentive_data.mean():.2f}, N={len(low_resp_incentive_data)}) vs 高责任感组 (均值={high_resp_incentive_data.mean():.2f}, N={len(high_resp_incentive_data)}):")
-                print(f"  T统计量={stat:.2f}, P值={p_value:.3f}{' *' if p_value < 0.05 else ''}")
-                if p_value < 0.05:
-                    print("    结论: 两组在该激励方案偏好上存在显著差异。")
-                else:
-                    print("    结论: 两组在该激励方案偏好上无显著差异。")
+# 心理因素与使用频率的相关系数
+print("\n心理因素与使用频率的Spearman相关系数：")
+correlations_psych_usage = {}
+if '使用频率_numeric' in df.columns:
+    target_usage_freq = df['使用频率_numeric'].dropna()
+    for factor_avg_col in psych_avg_cols:
+        if factor_avg_col in df.columns:
+            factor_data = df[factor_avg_col].dropna()
+            # 对齐索引，确保比较的是同一批用户
+            common_index = target_usage_freq.index.intersection(factor_data.index)
+            if len(common_index) > 1: # Spearman需要至少2个数据点
+                corr, p_value = spearmanr(target_usage_freq.loc[common_index], factor_data.loc[common_index])
+                correlations_psych_usage[factor_avg_col] = (corr, p_value)
+                print(f"{factor_avg_col.replace('_avg','')} vs 使用频率: Correlation={corr:.3f}, P-value={p_value:.3f}")
             else:
-                print(f"  环境责任感分组后，'{incentive_name_simple}' 的数据不足以进行t-检验 (某组少于2个有效值)。")
+                print(f"警告：{factor_avg_col.replace('_avg','')} vs 使用频率：数据不足以计算相关性。")
+        else:
+            print(f"警告：心理因素平均分列 '{factor_avg_col}' 不存在。")
+else:
+    print("警告：'使用频率_numeric' 列不存在，无法计算心理因素与使用频率的相关性。")
 
-print("\n" + "=" * 60)
-print("--- 相关性分析脚本执行完毕 ---")
-print(f"如果生成了图表，已尝试保存到 '{output_folder_corr}' 文件夹中。")
-print("请检查控制台输出的统计结果。标记 '*' 的P值表示在alpha=0.05水平上显著。")
+
+# --- 2.2 障碍与态度关系分析 ---
+print("\n--- 2.2 障碍与态度关系分析 ---")
+
+# 分析主要障碍因素与使用意愿的关联
+# 选取一个代表性的使用意愿指标，例如 Q20中第一个“每月持续使用”
+# 假设列名为 '20.未来使用意向:每月持续使用'
+usage_intention_col = '20.未来使用意向:每月持续使用' # 这个列名需要与你实际CSV中的完全一致
+
+print(f"\n主要障碍因素与使用意愿 ({usage_intention_col}) 的关联 (Mann-Whitney U test):")
+if usage_intention_col in df.columns and df[usage_intention_col].notna().sum() > 0:
+    for obs_col in obstacle_cols:
+        # obstacle_cols 已经是处理过的，如 '5.您在使用回收箱时遇到的主要障碍:位置不便'
+        # 确保障碍列是0/1数值型，并且意愿列有数据
+        if obs_col in df.columns and df[obs_col].isin([0,1]).all():
+            # 分组：遇到该障碍的用户 vs 未遇到该障碍的用户
+            group_has_obstacle = df[df[obs_col] == 1][usage_intention_col].dropna()
+            group_no_obstacle = df[df[obs_col] == 0][usage_intention_col].dropna()
+
+            if len(group_has_obstacle) >= 5 and len(group_no_obstacle) >= 5: # 样本量较少时检验可能不准确
+                try:
+                    stat, p_value = mannwhitneyu(group_has_obstacle, group_no_obstacle, alternative='two-sided')
+                    obstacle_name = obs_col.split(':')[-1]
+                    print(f"障碍 '{obstacle_name}':")
+                    print(f"  - 遇到障碍者平均意愿: {group_has_obstacle.mean():.2f} (N={len(group_has_obstacle)})")
+                    print(f"  - 未遇到障碍者平均意愿: {group_no_obstacle.mean():.2f} (N={len(group_no_obstacle)})")
+                    print(f"  - Mann-Whitney U: statistic={stat:.2f}, p-value={p_value:.3f}")
+                    if p_value < 0.05:
+                        print("  - 结论：该障碍与使用意愿显著相关。")
+                    else:
+                        print("  - 结论：该障碍与使用意愿无显著相关。")
+                except ValueError as e:
+                    print(f"  - 对于障碍 '{obstacle_name}', Mann-Whitney U检验无法执行: {e}")
+            else:
+                obstacle_name = obs_col.split(':')[-1]
+                print(f"障碍 '{obstacle_name}': 数据不足，无法进行有效比较。")
+        else:
+            print(f"警告：障碍列 '{obs_col}' 格式不正确或不存在。")
+else:
+    print(f"警告：使用意愿列 '{usage_intention_col}' 不存在或无有效数据，无法分析障碍与态度的关系。")
+
+
+# 心理因素之间的相关矩阵
+print("\n心理因素之间的Spearman相关矩阵：")
+if psych_avg_cols and all(col in df.columns for col in psych_avg_cols):
+    psych_df_for_corr = df[psych_avg_cols].dropna()
+    if not psych_df_for_corr.empty and len(psych_df_for_corr) > 1:
+        corr_matrix_psych = psych_df_for_corr.corr(method='spearman')
+        print(corr_matrix_psych)
+
+        # 可视化热力图
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(corr_matrix_psych, annot=True, cmap='coolwarm', fmt=".2f",
+                    xticklabels=[col.replace('_avg','') for col in psych_avg_cols],
+                    yticklabels=[col.replace('_avg','') for col in psych_avg_cols])
+        plt.title('心理因素之间的Spearman相关矩阵')
+        plt.xticks(rotation=45, ha='right')
+        plt.yticks(rotation=0)
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("警告：用于计算心理因素相关矩阵的数据不足或全为NaN。")
+else:
+    print("警告：部分或全部心理因素平均分列不存在，无法计算相关矩阵。")
+
+
+# --- 2.3 激励偏好分析 ---
+print("\n--- 2.3 激励偏好分析 ---")
+
+# 获取激励方案列 (Q19)
+incentive_cols = [col for col in df.columns if col.startswith("19.激励方案兴趣度:")]
+incentive_names_clean = [col.split(':')[-1] for col in incentive_cols] # 用于图表标签
+
+# 比较不同用户群体（例如，按年龄段）对各类激励的偏好差异
+print("\n不同年龄段对各类激励方案的偏好差异 (Kruskal-Wallis H-test):")
+if '8.您的年龄_numeric' in df.columns and incentive_cols: # 使用数值年龄进行分组
+    age_col_numeric = '8.您的年龄_numeric'
+    age_col_categorical = '8.您的年龄' # 用于标签
+
+    for i, inc_col in enumerate(incentive_cols):
+        incentive_name = incentive_names_clean[i]
+        print(f"\n激励方案: {incentive_name}")
+
+        # 按年龄段计算平均偏好度
+        if inc_col in df.columns:
+            temp_df_inc = df.dropna(subset=[inc_col, age_col_numeric, age_col_categorical])
+            if not temp_df_inc.empty:
+                mean_pref_by_age = temp_df_inc.groupby(age_col_categorical)[inc_col].mean().sort_index() # 按原始年龄标签排序
+                print("各年龄段平均偏好度:")
+                print(mean_pref_by_age)
+
+                # Kruskal-Wallis 检验
+                # 准备分组数据，使用数值年龄分组，但标签用分类年龄
+                age_groups_data = [
+                    group_data[inc_col].dropna().values
+                    for name, group_data in temp_df_inc.groupby(age_col_numeric) # 分组用数值年龄
+                ]
+                age_groups_data = [g for g in age_groups_data if len(g) > 0] # 移除空组
+
+                if len(age_groups_data) > 1:
+                    try:
+                        stat, p = kruskal(*age_groups_data)
+                        print(f"Kruskal-Wallis检验: H-statistic={stat:.3f}, p-value={p:.3f}")
+                        if p < 0.05:
+                            print("结论：不同年龄段对该激励方案的偏好存在显著差异。")
+                        else:
+                            print("结论：不同年龄段对该激励方案的偏好无显著差异。")
+                    except ValueError as e:
+                        print(f"Kruskal-Wallis检验无法执行: {e}")
+                else:
+                    print("数据不足以进行Kruskal-Wallis检验 (少于2个年龄组有数据)。")
+            else:
+                print(f"激励方案 '{incentive_name}' 或年龄数据不足。")
+        else:
+            print(f"警告：激励方案列 '{inc_col}' 不存在。")
+else:
+    print("警告：年龄列 '8.您的年龄_numeric' 或激励方案列不存在，无法进行分析。")
+
+
+# 分析环境责任感高低对激励偏好的影响
+print("\n环境责任感高低对激励偏好的影响 (Mann-Whitney U test):")
+env_resp_avg_col = '环境责任_avg'
+if env_resp_avg_col in df.columns and df[env_resp_avg_col].notna().sum() > 0 and incentive_cols:
+    # 将用户按环境责任感中位数分为高低两组
+    median_env_resp = df[env_resp_avg_col].median()
+    df['环境责任感_分组'] = df[env_resp_avg_col].apply(lambda x: '高' if x >= median_env_resp else ('低' if pd.notna(x) else np.nan))
+
+    for i, inc_col in enumerate(incentive_cols):
+        incentive_name = incentive_names_clean[i]
+        print(f"\n激励方案: {incentive_name}")
+
+        if inc_col in df.columns and df[inc_col].notna().sum() > 0 :
+            temp_df_env = df.dropna(subset=[inc_col, '环境责任感_分组'])
+            if not temp_df_env.empty:
+                group_high_resp = temp_df_env[temp_df_env['环境责任感_分组'] == '高'][inc_col].dropna()
+                group_low_resp = temp_df_env[temp_df_env['环境责任感_分组'] == '低'][inc_col].dropna()
+
+                if len(group_high_resp) >= 5 and len(group_low_resp) >= 5:
+                    try:
+                        stat, p_value = mannwhitneyu(group_high_resp, group_low_resp, alternative='two-sided')
+                        print(f"  - 高责任感组平均偏好: {group_high_resp.mean():.2f} (N={len(group_high_resp)})")
+                        print(f"  - 低责任感组平均偏好: {group_low_resp.mean():.2f} (N={len(group_low_resp)})")
+                        print(f"  - Mann-Whitney U: statistic={stat:.2f}, p-value={p_value:.3f}")
+                        if p_value < 0.1:
+                            print("  - 结论：环境责任感高低对该激励方案的偏好存在显著差异。")
+                        else:
+                            print("  - 结论：环境责任感高低对该激励方案的偏好无显著差异。")
+                    except ValueError as e:
+                        print(f"  - Mann-Whitney U检验无法执行: {e}")
+                else:
+                    print("  - 数据不足（高/低责任感组样本量不足），无法进行有效比较。")
+            else:
+                print(f"  - 激励方案 '{incentive_name}' 或环境责任感分组数据不足。")
+        else:
+            print(f"警告：激励方案列 '{inc_col}' 不存在或无有效数据。")
+
+else:
+    print("警告：'环境责任_avg'列不存在，或无有效环境责任数据，或无激励方案列，无法分析环境责任感对激励偏好的影响。")
+
+print("\n--- 相关性分析脚本执行完毕 ---")
