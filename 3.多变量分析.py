@@ -26,7 +26,7 @@ df_main_analysis.columns = df_main_analysis.columns.str.replace('[*\n]', '', reg
 df_main_analysis.columns = df_main_analysis.columns.str.replace('（可多选）', '', regex=False)
 
 # --- 图片保存设置 ---
-output_folder = "多变量分析图表"
+output_folder = "多变量分析文件夹"
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
     print(f"已创建文件夹: {output_folder}")
