@@ -59,6 +59,9 @@ for col in df.columns:
 for col in all_likert_cols:
     df[col] = df[col].astype(str).str.replace(r'^[A-E]\.\s*', '', regex=True).map(likert_mapping)
 
+# 保存原始分类变量值用于图表显示
+gender_dict = {'A.男': '男', 'B.女': '女'}
+df['性别_标签'] = df['7.您的性别'].map(gender_dict)
 
 # 人口统计学特征的映射
 df['7.您的性别'] = df['7.您的性别'].map({'A.男': 1, 'B.女': 2})
@@ -121,7 +124,12 @@ for name, col in demographics_to_analyze.items():
     if col in df.columns and '使用频率_numeric' in df.columns:
         temp_df = df.dropna(subset=['使用频率_numeric', col])
         if not temp_df.empty:
-            mean_usage_by_group = temp_df.groupby(col)['使用频率_numeric'].mean()
+            if name == '性别':
+                # 对性别特殊处理，使用文本标签而不是数字编码
+                mean_usage_by_group = temp_df.groupby('性别_标签')['使用频率_numeric'].mean()
+            else:
+                mean_usage_by_group = temp_df.groupby(col)['使用频率_numeric'].mean()
+                
             print(f"\n按{name}分组的平均使用频率:")
             print(mean_usage_by_group)
 
