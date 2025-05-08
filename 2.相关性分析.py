@@ -21,14 +21,13 @@ plt.rcParams['axes.unicode_minus'] = False
 warnings.filterwarnings('ignore', category=UserWarning, module='scipy')
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
-# --- 1. 数据加载和预处理 (与之前相同，此处省略以保持简洁) ---
+# --- 1. 数据加载和预处理---
 try:
     df = pd.read_csv('数据详情值.csv')
 except FileNotFoundError:
     print("错误：未找到 '数据详情值.csv' 文件。请确保文件在脚本同目录下。")
     exit()
 
-# ... (省略数据预处理代码，与你之前提供的版本一致) ...
 # Likert量表映射 (统一处理A/B/C/D/E 和 A./B./C./D./E.的情况)
 likert_mapping = {
     'A. 非常不同意': 1, '非常不同意': 1,
